@@ -6,6 +6,7 @@
 #include <pp_allocator.h>
 #include <iterator>
 #include <mutex>
+#include <cstring>
 
 class allocator_boundary_tags final :
     public smart_mem_resource,
@@ -15,14 +16,50 @@ class allocator_boundary_tags final :
 
 private:
 
-    static constexpr const size_t allocator_metadata_size = sizeof(memory_resource*) + sizeof(allocator_with_fit_mode::fit_mode) +
-                                                            sizeof(size_t) + sizeof(std::mutex) + sizeof(void*);
+    struct allocator_meta
+    {
+        std::pmr::memory_resource* parent_allocator;
+        allocator_with_fit_mode::fit_mode mode;
+        size_t total_size;
+        mutable std::mutex mtx;
+        void* first_block;
+    };
 
-    static constexpr const size_t occupied_block_metadata_size = sizeof(size_t) + sizeof(void*) + sizeof(void*) + sizeof(void*);
+    struct block_meta
+    {
+        size_t size;
+        void* allocator_ptr;
+        void* prev;
+        void* next;
+    };
+
+    static constexpr const size_t allocator_metadata_size = sizeof(allocator_meta);
+
+    static constexpr const size_t occupied_block_metadata_size = sizeof(block_meta);
 
     static constexpr const size_t free_block_metadata_size = 0;
 
     void *_trusted_memory;
+
+    static allocator_meta* get_meta(void* trusted)
+    {
+        return reinterpret_cast<allocator_meta*>(trusted);
+    }
+
+    static block_meta* get_block(void* ptr)
+    {
+        return reinterpret_cast<block_meta*>(ptr);
+    }
+
+    static void* get_user_ptr(block_meta* block)
+    {
+        return reinterpret_cast<char*>(block) + occupied_block_metadata_size;
+    }
+
+    static block_meta* get_block_from_user(void* user)
+    {
+        return reinterpret_cast<block_meta*>(reinterpret_cast<char*>(user) - occupied_block_metadata_size);
+    }
 
 public:
     
@@ -72,6 +109,7 @@ private:
 
     class boundary_iterator
     {
+        friend class allocator_boundary_tags;
         void* _occupied_ptr;
         bool _occupied;
         void* _trusted_memory;
